@@ -4,12 +4,6 @@ import warnings
 import json
 import sqlite3
 
-debugging = True
-def debug_print(*arg):
-  if(debugging):
-    print(*arg)
-
-
 class Table:
     def __init__(self) -> None:
         self.table_name = self.__class__.__name__
@@ -272,7 +266,7 @@ class Table:
                 data_dict.keys(), values_array))
             query = f"UPDATE {self.table_name} SET {temp_array}"+(
                 f" WHERE {self._buildCondition()}" if len(self._conditions) != 0 else '')
-        debug_print(query)
+        
         return query
 
     def offset(self, offset: int):
@@ -384,7 +378,7 @@ class Table:
         Returns:
             None
         """
-        debug_print(f""" DELETE FROM {self.table_name}{f" WHERE {self._buildCondition()}" if len(self._conditions) != 0 else ''}""")
+        
         self._runQuery(f""" DELETE FROM {self.table_name}{f" WHERE {self._buildCondition()}" if len(self._conditions) != 0 else ''}""")
         return None
 
@@ -439,9 +433,9 @@ class Table:
         raise ValueError(f"Did not found primary key in {self.table_name if table is None else table.table_name} table! Please define it in columns list.")
 
     def _excecuteQuery(self, query, named_key=True):
-        debug_print("+++++++++++++++++++++++++++++++++query+++++++++++++++++++++++++++++++++")
-        debug_print(query)
-        debug_print("+++++++++++++++++++++++++++++++++query+++++++++++++++++++++++++++++++++")
+        
+        
+        
         self.connect()
         self._cursor.execute(query)
 
