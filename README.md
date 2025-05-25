@@ -24,7 +24,7 @@ pip install fluent_db
 ### Defining a Table
 
 ```python
-from fluent_db.main import Table, Integer, Char, Timestamp
+from fluent_db import Table, Integer, Char, Timestamp
 
 class User(Table):
     def __init__(self):
@@ -108,7 +108,7 @@ pip install fluent_db
 ### Defining a Table
 
 ```python
-from fluent_db.main import Table, Integer, Char, Timestamp
+from fluent_db import Table, Integer, Char, Timestamp
 
 class User(Table):
     def __init__(self):
@@ -162,6 +162,34 @@ user = User()
 user.where("id", 1).delete()
 ```
 
+### custom database location
+
+```python
+# Define a base class with custom database location
+class MyDatabase(Table):
+    def __init__(self):
+        super().__init__()
+        self.database = "/path/to/my_database.sqlite3"  # Set your custom DB path here
+
+# Define a table using the custom DB base
+class Student(MyDatabase):
+    def __init__(self):
+        super().__init__()
+        self.columns = [
+            Integer("id").primary(),
+            Char("name"),
+            Timestamp("created_at").useCurrent()
+        ]
+
+class Teacher(MyDatabase):
+    def __init__(self):
+        super().__init__()
+        self.columns = [
+            Integer("id").primary(),
+            Char("name"),
+            Timestamp("created_at").useCurrent()
+        ]
+```
 ## License
 
 Fluent DB is licensed under the MIT License.
