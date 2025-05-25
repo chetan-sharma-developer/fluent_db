@@ -100,7 +100,7 @@ Fluent DB is a Python library that provides a fluent interface for database oper
 Install Fluent DB via pip:
 
 ```bash
-pip install fluent_db
+pip install fluent-db
 ```
 
 ## Usage Examples
