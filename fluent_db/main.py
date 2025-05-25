@@ -78,7 +78,7 @@ class Table:
 
         if not callable(column):
             # If the column is not a callable, add a condition based on the column and value
-            if value == None:
+            if value is None:
                 raise ValueError("Value is required!")
             if len(self._conditions) == 0:
                 self._conditions.append(
@@ -111,7 +111,7 @@ class Table:
         Returns:
             self: The instance of the class to allow method chaining.
         """
-        if (not isinstance(value, list)) or value == None or len(value) == 0:
+        if (not isinstance(value, list)) or value is None or len(value) == 0:
             raise ValueError("Value is required!")
 
         if len(self._conditions) == 0:
@@ -356,7 +356,7 @@ class Table:
         """
         if isinstance(columns, str):
             columns = [columns]
-        elif columns == None:
+        elif columns is None:
             columns = []
         elif not isinstance(columns, list):
             raise ValueError("Not able to identify column!")
@@ -395,7 +395,7 @@ class Table:
         """
         if isinstance(columns, str):
             columns = [columns]
-        elif columns == None:
+        elif columns is None:
             columns = []
         elif not isinstance(columns, list):
             raise ValueError("Not able to identify column!")
@@ -594,7 +594,7 @@ class ConditionBuilder:
         return self
     
     def whereIn(self, column, value: list):
-        if (not isinstance(value, list)) or value == None or len(value) == 0:
+        if (not isinstance(value, list)) or value is None or len(value) == 0:
             raise ValueError("Value is required!")
 
         if len(self._conditions) == 0:
