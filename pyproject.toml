@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fluent_db"
+version = "0.1.0"
+description = "Fluent DB is a Python library that provides a fluent, chainable interface for building and executing SQL queries—similar to Laravel's ORM. It supports elegant query construction, dynamic table creation, and intuitive data manipulation with a focus on clean, expressive code."
+readme = "README.md"
+requires-python = ">=3.6"
+license = {text = "MIT"}
+authors = [
+    { name = "Chetan Sharma", email = "chetan.sharma.159116@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
+[project.urls]
+Homepage = "https://github.com/chetan-sharma-developer/fluent_db"
