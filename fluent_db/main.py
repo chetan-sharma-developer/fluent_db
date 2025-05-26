@@ -4,13 +4,28 @@ import warnings
 import json
 import sqlite3
 
+class DatabaseConnector():
+    def __init__(self):
+        self.db_type = None
+
+class SQLiteConnector(DatabaseConnector):
+    def __init__(self, db_path):
+        self.db_type = "sqlite"
+        self.database_path = db_path
+        self.connection = sqlite3.connect(self.database_path)
+        self.cursor = self.connection.cursor()
+
+    def disconnect(self):
+        self.connection.close()
+        self.cursor.close()
+
 class Table:
-    def __init__(self) -> None:
+    def __init__(self, db_connector:DatabaseConnector=SQLiteConnector('database.db')) -> None:
         self.table_name = self.__class__.__name__
         self.columns = []
         self.current_time = "CURRENT_TIMESTAMP"
         self._conditions = []
-        self.database = "optinav.db"
+        self.database_connector:DatabaseConnector = db_connector
         self._limit = False
         self.__hasPrimary = [
             Id, Integer
@@ -20,17 +35,9 @@ class Table:
         self._distinct = False
         self._relation = []
 
-    def connect(self):
-        # Connect to the database
-        try:
-            self._conn = sqlite3.connect(self.database)
-            self._cursor = self._conn.cursor()
-        except:
-            raise RuntimeError("Database did not work as expected!")
-
-    def disconnect(self):
-        self._cursor.close()
-        self._conn.close()
+    # def disconnect(self):
+    #     self._cursor.close()
+    #     self._conn.close()
 
     def hasOne(self, main_column: str, belongs_to: list):
         """
@@ -196,22 +203,20 @@ class Table:
         Raises:
             Exception: If there is an error connecting to the database or executing the query.
         """
-        self.connect()
-        self._cursor.executescript(
+        self.database_connector.cursor.executescript(
             self.generate_insert_query(query, update=True))
-        self._conn.commit()
+        self.database_connector.connection.commit()
         for column in self.columns:
             if isinstance(column, Timestamp) and column.isCurrentOnUpdate:
-                self._cursor.executescript(
+                self.database_connector.cursor.executescript(
                     f"""UPDATE {self.table_name} SET {column.column_name} = {self.current_time}""")
         
         self.disconnect()
 
     def _runQuery(self, query: str):
-        self.connect()
-        self._cursor.executescript(query)
-        self._conn.commit()
-        self.disconnect()
+        self.database_connector.cursor.executescript(query)
+        self.database_connector.connection.commit()
+        # self.disconnect()
 
     def insert(self, query: dict):
         """
@@ -224,11 +229,11 @@ class Table:
             sqlite3.DatabaseError: If an error occurs while executing the SQL script.
 
         """
-        self.connect()
-        self._cursor.executescript(
+        # self.connect()
+        self.database_connector.cursor.executescript(
             self.generate_insert_query(query, update=False))
-        self._conn.commit()
-        self.disconnect()
+        self.database_connector.connection.commit()
+        # self.disconnect()
 
     def _valueStringHandler(self, value):
         if isinstance(value, str):
@@ -436,19 +441,19 @@ class Table:
         
         
         
-        self.connect()
-        self._cursor.execute(query)
+        # self.connect()
+        self.database_connector.cursor.execute(query)
 
         if named_key:
             if len(self._relation) == 0:
-                columns = [col[0] for col in self._cursor.description]
-                results = self._cursor.fetchall()
+                columns = [col[0] for col in self.database_connector.cursor.description]
+                results = self.database_connector.cursor.fetchall()
                 results = [dict(zip(columns, row)) for row in results]
 
             else:
-                results = self._cursor.fetchall()
+                results = self.database_connector.cursor.fetchall()
                 new_result = []
-                columns = [col[0] for col in self._cursor.description]
+                columns = [col[0] for col in self.database_connector.cursor.description]
                 primary_column = {}
                 primary_column[self.table_name] = self.getPrimaryColumn()
 
@@ -552,7 +557,7 @@ class Table:
                 results = new_result
 
         else:
-            results = self._cursor.fetchall()
+            results = self.database_connector.cursor.fetchall()
 
         return results
 
@@ -577,7 +582,6 @@ class Table:
         query = f'''CREATE TABLE IF NOT EXISTS {self.table_name} ({columns})'''
         self._runQuery(query)
         return query
-
 
 class ConditionBuilder:
     def __init__(self, table_name):
