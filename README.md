@@ -220,7 +220,6 @@ User().where("age", 20, operator="<").delete()
 ```python
 users_over_30 = User().where("age", 30, operator=">").get()
 active_users = User().where("status", "active").get()
-```
 
 #### `orWhere(column, value, operator="=")`
 
