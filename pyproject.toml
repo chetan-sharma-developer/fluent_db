@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluent_db"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fluent DB is a Python library that provides a fluent, chainable interface for building and executing SQL queries—similar to Laravel's ORM. It supports elegant query construction, dynamic table creation, and intuitive data manipulation with a focus on clean, expressive code."
 readme = "README.md"
 requires-python = ">=3.6"

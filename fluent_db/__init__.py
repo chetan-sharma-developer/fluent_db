@@ -1,1 +1,1 @@
-from .main import Table, ConditionBuilder, ColumnData, Char, Varchar, Timestamp, Integer, Id, Decimal, Boolean, Text, LongText
+from .main import Table, ConditionBuilder, ColumnData, Char, Varchar, Timestamp, Integer, Id, Decimal, Boolean, Text, LongText, SQLiteConnector
