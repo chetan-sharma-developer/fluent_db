@@ -3,6 +3,10 @@ import re
 import warnings
 import json
 import sqlite3
+import os
+import subprocess
+import mysql.connector
+from mysql.connector import Error
 
 class DatabaseConnector():
     def __init__(self):
@@ -16,8 +20,75 @@ class SQLiteConnector(DatabaseConnector):
         self.cursor = self.connection.cursor()
 
     def disconnect(self):
-        self.connection.close()
-        self.cursor.close()
+        try:
+            self.connection.close()
+            self.cursor.close()
+        except:
+            pass
+
+class MySQLConnector(DatabaseConnector):
+    def __init__(self, port: int = 3306, host: str = "127.0.0.1",
+                 user: str = "root", password: str = "", dbname=None, standalone: bool = False, datadir: str = None):
+        self.db_type = "mysql"
+        self.connection = None
+        self.cursor = None
+        if (dbname is None):
+            raise ValueError("Database name is required for MySQL connection.")
+        
+        if standalone:
+            self.sql_bin_folder:str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+
+            if datadir is not None:
+                self.data_dir = datadir
+            else:
+                self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+            if not os.path.exists(self.data_dir):
+                os.makedirs(self.data_dir)
+
+            required_files = ["ibdata1", "auto.cnf"]
+            is_initialized = all([os.path.exists(os.path.join(self.data_dir, f)) for f in required_files])
+
+            if not is_initialized:
+                os.system(f'{os.path.join(self.sql_bin_folder, "mysql_install_db")} --datadir="{self.data_dir}" --password="{password}" --default-user')
+
+            subprocess.Popen([
+                os.path.join(self.sql_bin_folder, "mysqld"),
+                "--port=3306",
+                f"--basedir={self.sql_bin_folder}",
+                f"--datadir={self.data_dir}",
+                "--standalone"
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        try:
+            self.connection = mysql.connector.connect(
+                host=host,
+                user=user,
+                password=password,
+                port=port
+            )
+            self.cursor = self.connection.cursor()
+        except Error as e:
+            raise ConnectionError(f"Error connecting to MySQL server: {e}")
+        
+        if not self.connection.is_connected():
+            raise ConnectionError(f"Error connecting to MySQL server.")
+        
+        self.select_db(dbname)
+            
+
+    def select_db(self, dbname: str):
+        if dbname is None:
+            return
+
+        if not self.connection.is_connected():
+            raise ConnectionError("Not connected to MySQL server.")
+
+        cursor = self.connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {dbname}")
+        cursor.execute(f"USE {dbname}")
+        self.connection.commit()
+        cursor.close()
 
 class Table:
     def __init__(self, db_connector:DatabaseConnector=SQLiteConnector('database.db')) -> None:
@@ -35,9 +106,8 @@ class Table:
         self._distinct = False
         self._relation = []
 
-    # def disconnect(self):
-    #     self._cursor.close()
-    #     self._conn.close()
+    def disconnect(self):
+        self.database_connector.disconnect()
 
     def hasOne(self, main_column: str, belongs_to: list):
         """
@@ -203,18 +273,18 @@ class Table:
         Raises:
             Exception: If there is an error connecting to the database or executing the query.
         """
-        self.database_connector.cursor.executescript(
+        self.database_connector.cursor.execute(
             self.generate_insert_query(query, update=True))
         self.database_connector.connection.commit()
         for column in self.columns:
             if isinstance(column, Timestamp) and column.isCurrentOnUpdate:
-                self.database_connector.cursor.executescript(
+                self.database_connector.cursor.execute(
                     f"""UPDATE {self.table_name} SET {column.column_name} = {self.current_time}""")
         
-        self.disconnect()
+        # self.disconnect()
 
     def _runQuery(self, query: str):
-        self.database_connector.cursor.executescript(query)
+        self.database_connector.cursor.execute(query)
         self.database_connector.connection.commit()
         # self.disconnect()
 
@@ -230,7 +300,7 @@ class Table:
 
         """
         # self.connect()
-        self.database_connector.cursor.executescript(
+        self.database_connector.cursor.execute(
             self.generate_insert_query(query, update=False))
         self.database_connector.connection.commit()
         # self.disconnect()
@@ -438,9 +508,6 @@ class Table:
         raise ValueError(f"Did not found primary key in {self.table_name if table is None else table.table_name} table! Please define it in columns list.")
 
     def _excecuteQuery(self, query, named_key=True):
-        
-        
-        
         # self.connect()
         self.database_connector.cursor.execute(query)
 
@@ -578,7 +645,7 @@ class Table:
                 raise ValueError(
                     'All columns are required to be type of ColumnData!')
 
-        columns = ", ".join(col.create() for col in self.columns)
+        columns = ", ".join(col.create(self.database_connector.db_type) for col in self.columns)
         query = f'''CREATE TABLE IF NOT EXISTS {self.table_name} ({columns})'''
         self._runQuery(query)
         return query
@@ -624,96 +691,124 @@ class ConditionBuilder:
 
 class ColumnData:
     def __init__(self) -> None:
-        self.isNullable = False
+        self.isNullable: bool = False # By default, columns are NOT NULL unless nullable() is called
+        self._constraints: list[str] = [] # For DEFAULT, UNIQUE, CHECK etc.
+
+    def _add_common_constraints(self, parts: list[str], db_type: str) -> None:
+        """Helper to add NOT NULL/NULL and other constraints."""
+        # Determine if this column is effectively a Primary Key for NOT NULL logic
+        is_pk_effectively = False
+        if isinstance(self, Id):
+            is_pk_effectively = True
+        elif hasattr(self, 'primary_key') and getattr(self, 'primary_key'):
+            is_pk_effectively = True
+        
+        # Nullability
+        if self.isNullable:
+            parts.append("NULL")
+        else:
+            # PKs are implicitly NOT NULL in SQLite.
+            # For MySQL, explicit NOT NULL is good even for PKs.
+            if db_type == 'sqlite' and is_pk_effectively:
+                pass  # SQLite PK is implicitly NOT NULL
+            else:
+                parts.append("NOT NULL")
+        
+        parts.extend(self._constraints)
 
 
 class Char(ColumnData):
-    def __init__(self, column_name, size=255) -> None:
+    def __init__(self, column_name: str, size: int = 255) -> None:
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append(f'CHAR({size})')
+        self.column_name: str = column_name
+        self.size: int = size
 
-    def default(self, default_value='DEFAULT'):
-        self._build.append(f"DEFAULT '{default_value}'")
+    def default(self, default_value: str = 'DEFAULT'): # Note: 'DEFAULT' keyword not valid SQL string literal
+        self._constraints.append(f"DEFAULT '{default_value}'")
         return self
 
     def unique(self):
-        self._build.append("UNIQUE")
+        self._constraints.append("UNIQUE")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def regexp(self, regexp):
-        if isinstance(regexp, re.Pattern):
-            regexp = regexp.pattern
-        self._build.append(f"CHECK (email REGEXP '{regexp}'")
+    def regexp(self, regexp_pattern: re.Pattern):
+        if isinstance(regexp_pattern, re.Pattern):
+            regexp_pattern = regexp_pattern.pattern
+        # Ensure single quotes in pattern are escaped for SQL
+        escaped_regexp = regexp_pattern.replace("'", "''")
+        self._constraints.append(f"CHECK ({self.column_name} REGEXP '{escaped_regexp}')")
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        parts.append(f'CHAR({self.size})') # Same for SQLite and MySQL
+        
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
 
 
 class Varchar(ColumnData):
-    def __init__(self, column_name, size=255) -> None:
+    def __init__(self, column_name: str, size: int = 255) -> None:
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append(f'VARCHAR({size})')
+        self.column_name: str = column_name
+        self.size: int = size
 
-    def default(self, default_value='DEFAULT'):
-        self._build.append(f"DEFAULT '{default_value}'")
+    def default(self, default_value: str = 'DEFAULT'): # Note: 'DEFAULT' keyword not valid SQL string literal
+        self._constraints.append(f"DEFAULT '{default_value}'")
         return self
 
     def unique(self):
-        self._build.append("UNIQUE")
+        self._constraints.append("UNIQUE")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def regexp(self, regexp):
-        if isinstance(regexp, re.Pattern):
-            regexp = regexp.pattern
-        self._build.append(f"CHECK (email REGEXP '{regexp}'")
+    def regexp(self, regexp_pattern: re.Pattern):
+        if isinstance(regexp_pattern, re.Pattern):
+            regexp_pattern = regexp_pattern.pattern
+        escaped_regexp = regexp_pattern.replace("'", "''")
+        self._constraints.append(f"CHECK ({self.column_name} REGEXP '{escaped_regexp}')")
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        parts.append(f'VARCHAR({self.size})') # Same for SQLite and MySQL
+        
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
 
 
 class Timestamp(ColumnData):
-
-    def __init__(self, column_name) -> None:
+    def __init__(self, column_name: str) -> None:
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._defalutPlaced = False
-        self.isCurrentOnUpdate = False
+        self.column_name: str = column_name
+        self._default_placed: bool = False
+        self.isCurrentOnUpdate: bool = False
 
-    def default(self, default_value):
+    def default(self, default_value: datetime.datetime):
+        if self._default_placed:
+            warnings.warn("Default value has already been set for this Timestamp column.", UserWarning)
+            return self
+            
         if isinstance(default_value, datetime.datetime):
             default_value = default_value.strftime('%Y-%m-%d %H:%M:%S')
-
-        if not self._defalutPlaced:
-            self._defalutPlaced = True
-            self._build.append(f"DEFAULT '{default_value}'")
-        else:
-            warnings.warn("Default values can not be more then one!")
-
+        
+        self._constraints.append(f"DEFAULT '{default_value}'")
+        self._default_placed = True
         return self
 
     def useCurrent(self):
-        if not self._defalutPlaced:
-            self._defalutPlaced = True
-            self._build.append(f"DEFAULT CURRENT_TIMESTAMP")
-        else:
-            warnings.warn("Default values can not be more then one!")
+        if self._default_placed:
+            warnings.warn("Default value has already been set for this Timestamp column.", UserWarning)
+            return self
+        self._constraints.append(f"DEFAULT CURRENT_TIMESTAMP")
+        self._default_placed = True
         return self
 
     def useCurrentOnUpdate(self):
@@ -721,32 +816,48 @@ class Timestamp(ColumnData):
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        if db_type == 'mysql':
+            parts.append('TIMESTAMP')
+        else: # sqlite
+            parts.append('DATETIME') # SQLite uses DATETIME more commonly for this behavior
+
+        self._add_common_constraints(parts, db_type) # Handles NULL/NOT NULL and existing constraints
+
+        if db_type == 'mysql' and self.isCurrentOnUpdate:
+            parts.append('ON UPDATE CURRENT_TIMESTAMP')
+            
+        return " ".join(parts)
 
 
 class Integer(ColumnData):
-    def __init__(self, column_name, size=11) -> None:
+    def __init__(self, column_name: str, size: int = 11) -> None:
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append(f'INT({size})')
-        self.primary_key = False
+        self.column_name: str = column_name
+        self.size: int = size # Mainly for MySQL display width
+        self.is_auto_increment: bool = False
+        self.primary_key: bool = False
 
     def auto_increment(self):
-        self._build.append("AUTO_INCREMENT")
+        self.is_auto_increment = True
+        # For SQLite, auto_increment implies PRIMARY KEY on an INTEGER column
+        if not self.primary_key:
+            self.primary_key = True 
         return self
 
-    def default(self, default_value):
-        self._build.append(f"DEFAULT {default_value}")
+    def default(self, default_value: int):
+        self._constraints.append(f"DEFAULT {default_value}")
         return self
 
     def unique(self):
-        self._build.append("UNIQUE")
+        if self.primary_key:
+             warnings.warn(f"Column '{self.column_name}' is already a PRIMARY KEY, which implies UNIQUE. Explicit UNIQUE constraint skipped.", UserWarning)
+        else:
+            self._constraints.append("UNIQUE")
         return self
 
     def primary(self):
@@ -754,121 +865,179 @@ class Integer(ColumnData):
         return self
 
     def nullable(self):
-        self._build.append("NULL")
-        self.isNullable = True
+        if self.primary_key:
+            warnings.warn(f"PRIMARY KEY column '{self.column_name}' cannot be NULL. nullable() call ignored.", UserWarning)
+        else:
+            self.isNullable = True
         return self
 
-    def create(self):
-        if self.primary_key:
-            self._build.append("PRIMARY KEY")
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+
+        if db_type == 'mysql':
+            parts.append(f'INT({self.size})')
+            # Nullability for MySQL (PK implies NOT NULL, but explicit is fine)
+            if self.primary_key:
+                self.isNullable = False # Force NOT NULL for PK
+            
+            self._add_common_constraints(parts, db_type)
+
+            if self.is_auto_increment:
+                parts.append("AUTO_INCREMENT")
+            if self.primary_key and "PRIMARY KEY" not in parts : # Check if already added by _add_common_constraints somehow
+                # Find a suitable place or just append
+                pk_idx = -1
+                for i, p in enumerate(parts):
+                    if p.upper() == "AUTO_INCREMENT" or p.upper().startswith("DEFAULT") or p.upper() == "UNIQUE":
+                        pk_idx = i + 1
+                        break
+                if pk_idx != -1 and pk_idx < len(parts):
+                     parts.insert(pk_idx, "PRIMARY KEY")
+                else:
+                     parts.append("PRIMARY KEY")
+
+
+        else: # sqlite
+            parts.append('INTEGER')
+            # For SQLite, an INTEGER PRIMARY KEY is implicitly an alias for ROWID and auto-incrementing.
+            # If auto_increment is true, it MUST be INTEGER PRIMARY KEY AUTOINCREMENT for specific behavior.
+            
+            # Handle PK and AUTOINCREMENT together for SQLite
+            pk_added = False
+            if self.primary_key:
+                if self.is_auto_increment:
+                    parts.append("PRIMARY KEY AUTOINCREMENT")
+                    self.isNullable = False # PK implies NOT NULL
+                else:
+                    parts.append("PRIMARY KEY")
+                    self.isNullable = False # PK implies NOT NULL
+                pk_added = True
+            
+            self._add_common_constraints(parts, db_type)
+            
+            # If unique was called on a PK, SQLite would raise an error if "UNIQUE" is added again.
+            # _add_common_constraints might add "UNIQUE". We need to ensure it's not redundant.
+            if pk_added and "UNIQUE" in parts:
+                parts.remove("UNIQUE") # PK implies UNIQUE
+
+        return " ".join(parts)
 
 
 class Id(ColumnData):
-    def __init__(self, column_name) -> None:
+    def __init__(self, column_name: str = 'id') -> None: # Default column name to 'id'
         super().__init__()
-        self.column_name = column_name
-        self.primary_key = True
-        self._build = [column_name]
-        self._build.append(f'INTEGER')
+        self.column_name: str = column_name
+        self.isNullable = False # IDs are never nullable
+        self.primary_key = True # IDs are always primary keys
 
-    def create(self):
-        self._build.append("PRIMARY KEY")
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        if db_type == 'mysql':
+            parts.extend(['INT', 'NOT NULL', 'AUTO_INCREMENT', 'PRIMARY KEY'])
+        else: # sqlite
+            # INTEGER PRIMARY KEY AUTOINCREMENT is the standard way for auto-incrementing IDs
+            parts.extend(['INTEGER', 'NOT NULL', 'PRIMARY KEY', 'AUTOINCREMENT'])
+        # No need to call _add_common_constraints as everything is explicit here
+        return " ".join(parts)
 
 
-class Decimal(ColumnData):
-    def __init__(self, column_name, size=11, decimal_places=2):
+class Decimal(ColumnData): # Changed from Float to Decimal for precision
+    def __init__(self, column_name: str, precision: int = 10, scale: int = 2): # Use precision and scale
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append(f'FLOAT({size},{decimal_places})')
+        self.column_name: str = column_name
+        self.precision: int = precision
+        self.scale: int = scale
 
-    def default(self, default_value):
-        self._build.append(f"DEFAULT {default_value}")
+    def default(self, default_value: float):
+        self._constraints.append(f"DEFAULT {default_value}")
         return self
 
     def unique(self):
-        self._build.append("UNIQUE")
+        self._constraints.append("UNIQUE")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def create(self):
-        return " ".join(self._build)
-
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        if db_type == 'mysql':
+            parts.append(f'DECIMAL({self.precision},{self.scale})')
+        else: # sqlite
+            # SQLite uses NUMERIC. It can store any precision, but this helps define affinity.
+            parts.append(f'NUMERIC({self.precision},{self.scale})')
+        
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
 
 class Boolean(ColumnData):
-    def __init__(self, column_name):
+    def __init__(self, column_name: str):
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append('TINYINT')
+        self.column_name: str = column_name
 
-    def default(self, default_value):
+    def default(self, default_value: bool):
+        sql_val = 0
         if isinstance(default_value, bool):
-            if default_value:
-                default_value = 1
-            else:
-                default_value = 0
-        else:
-            if default_value > 1:
-                default_value = 1
-            elif (default_value < 0):
-                default_value = 0
-            else:
-                default_value = int(default_value)
-
-        self._build.append(f"DEFAULT {default_value}")
+            sql_val = 1 if default_value else 0
+        else: # int
+            sql_val = 1 if int(default_value) > 0 else 0
+        self._constraints.append(f"DEFAULT {sql_val}")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        if db_type == 'mysql':
+            parts.append('TINYINT(1)') # Common practice for boolean in MySQL
+        else: # sqlite
+            parts.append('INTEGER') # SQLite recommends INTEGER for booleans (0 or 1)
+        
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
 
 
 class Text(ColumnData):
-    def __init__(self, column_name):
+    def __init__(self, column_name: str):
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append('TEXT')
+        self.column_name: str = column_name
 
-    def default(self, default_value):
-        self._build.append(f"DEFAULT '{default_value}'")
+    def default(self, default_value: str):
+        self._constraints.append(f"DEFAULT '{default_value}'")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name, 'TEXT'] # TEXT is common for both
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
 
 
 class LongText(ColumnData):
-    def __init__(self, column_name):
+    def __init__(self, column_name: str):
         super().__init__()
-        self.column_name = column_name
-        self._build = [column_name]
-        self._build.append('LONGTEXT')
+        self.column_name: str = column_name
 
-    def default(self, default_value):
-        self._build.append(f"DEFAULT '{default_value}'")
+    def default(self, default_value: str):
+        self._constraints.append(f"DEFAULT '{default_value}'")
         return self
 
     def nullable(self):
-        self._build.append("NULL")
         self.isNullable = True
         return self
 
-    def create(self):
-        return " ".join(self._build)
+    def create(self, db_type: str = 'sqlite') -> str:
+        parts = [self.column_name]
+        if db_type == 'mysql':
+            parts.append('LONGTEXT')
+        else: # sqlite
+            parts.append('TEXT') # SQLite doesn't have a distinct LONGTEXT
+        
+        self._add_common_constraints(parts, db_type)
+        return " ".join(parts)
