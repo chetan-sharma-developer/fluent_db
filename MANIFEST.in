@@ -1,0 +1,3 @@
+recursive-include fluent_db/bin *
+include README.md
+include LICENSE.md

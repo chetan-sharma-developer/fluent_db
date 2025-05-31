@@ -2,4 +2,5 @@
 /dist/
 /build/
 /fluent_db.egg-info/
+/fluent_db/data/
 __pycache__/
